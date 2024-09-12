@@ -1,0 +1,107 @@
+name: Base CI Checks
+on:
+  # https://help.github.com/en/actions/reference/events-that-trigger-workflows#pull-request-event-pull_request
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # Only run for PRs with main as base branch
+    branches:
+      - main
+
+env:
+  # Force pipenv to create virtualenv in .venv dir (relative to repo's root dir)
+  PIPENV_VENV_IN_PROJECT: 1
+
+jobs:
+  lint-golang:
+    name: Run linting and formatting for GO
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: true
+      - name: Install dependencies
+        run: go get .
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.60
+
+  test-golang:
+    name: Build and test GO CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: true
+      - name: Install dependencies
+        run: go get ./...
+      - name: Build
+        run: go build -v cmd/main.go
+      - name: Test with the Go CLI
+        run: go test ./...
+
+  lint-python:
+    name: Run style and type checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        id: python-setup
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.11.6
+
+      - uses: actions/cache@v2
+        id: poetry-cache
+        with:
+          path: .venv
+          key: ${{ runner.os }}-${{ steps.python-setup.outputs.python-version }}-${{ hashFiles('recommendor/poetry.lock') }}
+
+      - name: Install poetry
+        run: pip install poetry
+
+      - name: Install dev packages
+        if: steps.poetry-cache.outputs.cache-hit != 'true'
+        run: poetry install --with dev
+
+      - name: Run linters
+        run: poetry run tox -e lint
+
+      - name: Run type checker
+        run: poetry run tox -e type-check
+
+  test-python:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout a copy of the repo
+      - uses: actions/checkout@v2
+    
+      - name: Setup Python
+        id: python-setup
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.11.6
+
+      - uses: actions/cache@v2
+        id: poetry-cache
+        with:
+          path: .venv
+          key: ${{ runner.os }}-${{ steps.python-setup.outputs.python-version }}-${{ hashFiles('recommendor/poetry.lock') }}
+
+      - name: Install poetry
+        run: pip install poetry
+
+      - name: Install dev packages
+        if: steps.poetry-cache.outputs.cache-hit != 'true'
+        run: poetry install --with dev
+
+      - name: Run unit tests
+        run: poetry run tox -e unit

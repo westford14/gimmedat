@@ -23,7 +23,7 @@ jobs:
           go-version: '1.22.x'
           cache: true
       - name: Install dependencies
-        run: go get .
+        run: go get ./...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
@@ -65,16 +65,20 @@ jobs:
           key: ${{ runner.os }}-${{ steps.python-setup.outputs.python-version }}-${{ hashFiles('recommendor/poetry.lock') }}
 
       - name: Install poetry
+        working-directory: recommender
         run: pip install poetry
 
       - name: Install dev packages
+        working-directory: recommender
         if: steps.poetry-cache.outputs.cache-hit != 'true'
         run: poetry install --with dev
 
       - name: Run linters
+        working-directory: recommender
         run: poetry run tox -e lint
 
       - name: Run type checker
+        working-directory: recommender
         run: poetry run tox -e type-check
 
   test-python:
@@ -97,11 +101,95 @@ jobs:
           key: ${{ runner.os }}-${{ steps.python-setup.outputs.python-version }}-${{ hashFiles('recommendor/poetry.lock') }}
 
       - name: Install poetry
+        working-directory: recommender
         run: pip install poetry
 
       - name: Install dev packages
+        working-directory: recommender
         if: steps.poetry-cache.outputs.cache-hit != 'true'
         run: poetry install --with dev
 
       - name: Run unit tests
+        working-directory: recommender
         run: poetry run tox -e unit
+
+  terraform-lint:
+    name: Run terraform lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: dorny/paths-filter@v2
+        name: Check for terraform changes
+        id: changes
+        with:
+          filters: |
+            src:
+              - 'terraform/**'
+
+      - if: steps.changes.outputs.src == 'true'
+        name: Setup terraform
+        id: terraform-setup
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.6
+
+      - if: steps.changes.outputs.src == 'true'
+        name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - if: steps.changes.outputs.src == 'true'
+        name: Terraform init
+        id: init
+        working-directory: terraform/root-modules/gimmedat
+        env:
+          TF_WORKSPACE: default
+        run: |
+          terraform init
+        
+      - if: steps.changes.outputs.src == 'true'
+        id: fmt
+        name: Lint terraform
+        run: |
+          terraform fmt -recursive -check terraform/
+
+      - if: steps.changes.outputs.src == 'true'
+        name: Terraform plan
+        id: dev-plan
+        working-directory: terraform/root-modules/gimmedat
+        env:
+          TF_WORKSPACE: gimmedat
+        run: |
+          terraform plan -out=tf.out -var-file dev.tfvars
+  
+      - if: steps.changes.outputs.src == 'true'
+        uses: actions/github-script@v7
+        env:
+          PLAN: "terraform\n${{ steps.dev-plan.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.TOKEN }}
+          script: |
+            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
+            #### Terraform Plan 📖\`${{ steps.dev-plan.outcome }}\`
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`\n
+            ${process.env.PLAN}
+            \`\`\`
+
+            </details>
+
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${{ github.workflow }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })

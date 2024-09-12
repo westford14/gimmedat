@@ -154,4 +154,6 @@ dmypy.json
 # Jupyter Notebooks
 .ipynb_checkpoints
 *.ipynb
-notebooks/
+
+# Terraform
+.terraform/
